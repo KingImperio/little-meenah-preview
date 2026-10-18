@@ -67,7 +67,8 @@ const tools = [
 ];
 export default async function handler(req, res) {
   const startedAt = Date.now();
-  let phase = "authentication", requestedModel;
+  let phase = "authentication",
+    requestedModel;
   res.setHeader("Cache-Control", "no-store");
   const streaming = req.headers.accept?.includes("text/event-stream");
   let opened = false;
@@ -150,7 +151,10 @@ export default async function handler(req, res) {
       phase = "model-" + step;
       disconnected.signal.throwIfAborted();
       if (Date.now() >= deadline)
-        throw statusError("This request took too long. Try a smaller task or another free model.", 504);
+        throw statusError(
+          "This request took too long. Try a smaller task or another free model.",
+          504,
+        );
       emit("status", {
         label: step ? "Working through your request" : "Waiting for the model",
       });
@@ -231,6 +235,7 @@ export default async function handler(req, res) {
               throw Error("Invalid plan details.");
             proposals.push({
               kind: "plan",
+              expiresAt: Date.now() + 300000,
               title: args.title,
               date: args.date,
               summary: args.reason,
@@ -295,6 +300,7 @@ export default async function handler(req, res) {
             proposals.push({
               ...action,
               summary: String(args.summary).slice(0, 500),
+              expiresAt: Date.now() + 300000,
               token: signAction(user.id, action),
             });
             output = { pendingApproval: true };
@@ -323,13 +329,22 @@ export default async function handler(req, res) {
       model,
     });
   } catch (e) {
-    console.warn("BUTLER_REQUEST_FAILED", JSON.stringify({
-      type: e?.name || "Error", status: e?.status || 500,
-      phase, elapsedMs: Date.now() - startedAt, model: requestedModel,
-      ...(e?.upstreamStatus ? { upstreamStatus: e.upstreamStatus } : {}),
-    }));
+    console.warn(
+      "BUTLER_REQUEST_FAILED",
+      JSON.stringify({
+        type: e?.name || "Error",
+        status: e?.status || 500,
+        phase,
+        elapsedMs: Date.now() - startedAt,
+        model: requestedModel,
+        ...(e?.upstreamStatus ? { upstreamStatus: e.upstreamStatus } : {}),
+      }),
+    );
     if (e?.name === "TimeoutError")
-      e = statusError("This free model took too long to respond. Try another free model or send a smaller request. Your draft is still here.", 504);
+      e = statusError(
+        "This free model took too long to respond. Try another free model or send a smaller request. Your draft is still here.",
+        504,
+      );
     if (opened) {
       if (!res.destroyed) {
         emit("error", {
