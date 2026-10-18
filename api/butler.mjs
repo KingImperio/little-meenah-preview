@@ -11,6 +11,7 @@ import {
   failure,
   rateLimit,
 } from "../server/security.mjs";
+export const config = { maxDuration: 150 };
 const tools = [
   {
     type: "function",
@@ -145,10 +146,12 @@ export default async function handler(req, res) {
     const proposals = [];
     let session = null,
       discovery = null;
-    const deadline = Date.now() + 45000;
+    const deadline = Date.now() + 120000;
     for (let step = 0; step < 4; step++) {
       phase = "model-" + step;
       disconnected.signal.throwIfAborted();
+      if (Date.now() >= deadline)
+        throw statusError("This request took too long. Try a smaller task or another free model.", 504);
       emit("status", {
         label: step ? "Working through your request" : "Waiting for the model",
       });
@@ -167,12 +170,9 @@ export default async function handler(req, res) {
           ...(selected.reasoning
             ? {
                 reasoning: {
-                  effort:
-                    mode === "deep"
-                      ? "high"
-                      : mode === "fast"
-                        ? "low"
-                        : "medium",
+                  ...(mode === "fast"
+                    ? { enabled: false, effort: "none" }
+                    : { effort: mode === "deep" ? "high" : "low" }),
                 },
               }
             : {}),
@@ -180,7 +180,7 @@ export default async function handler(req, res) {
         signal: AbortSignal.any([
           disconnected.signal,
           AbortSignal.timeout(
-            Math.max(1, Math.min(30000, deadline - Date.now())),
+            Math.max(1, Math.min(60000, deadline - Date.now())),
           ),
         ]),
       });
@@ -323,6 +323,8 @@ export default async function handler(req, res) {
       type: e?.name || "Error", status: e?.status || 500,
       phase, elapsedMs: Date.now() - startedAt, model: requestedModel,
     }));
+    if (e?.name === "TimeoutError")
+      e = statusError("This free model took too long to respond. Try another free model or send a smaller request. Your draft is still here.", 504);
     if (opened) {
       if (!res.destroyed) {
         emit("error", {
