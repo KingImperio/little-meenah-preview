@@ -87,12 +87,11 @@ export default async function handler(req, res) {
   }
   function finish(data) {
     if (streaming) {
-      if (spoken.trim())
-        data.text =
-          spoken.trim() +
-          (data.text && !spoken.trim().endsWith(data.text)
-            ? "\n\n" + data.text
-            : "");
+      const streamed = spoken.trim();
+      const final = typeof data.text === "string" ? data.text.trim() : "";
+      data.text = streamed
+        ? streamed + (final && !streamed.endsWith(final) ? "\n\n" + final : "")
+        : final;
       emit("done", data);
       res.end();
       return;
@@ -127,13 +126,13 @@ export default async function handler(req, res) {
       ? body.mode
       : "balanced";
     const model = body.model || presets(available)[mode];
-    requestedModel = model;
     const selected = available.find((m) => m.id === model && m.chat);
     if (!selected)
       throw statusError(
         "No eligible free model is available. No paid model was selected.",
         503,
       );
+    requestedModel = selected.id;
     const context =
       body.context && JSON.stringify(body.context).slice(0, 12000);
     const messages = [
@@ -184,11 +183,16 @@ export default async function handler(req, res) {
           ),
         ]),
       });
-      if (!r.ok)
-        throw statusError(
-          "The model did not respond. Try another configured model.",
+      if (!r.ok) {
+        const error = statusError(
+          r.status === 429
+            ? "This free model is busy. Try another free model or wait a little before retrying."
+            : "The model service did not accept this request. Try another free model.",
           502,
         );
+        error.upstreamStatus = r.status;
+        throw error;
+      }
       const message = streaming
         ? await readKiloCompletion(r, (text) => {
             spoken += text;
@@ -322,6 +326,7 @@ export default async function handler(req, res) {
     console.warn("BUTLER_REQUEST_FAILED", JSON.stringify({
       type: e?.name || "Error", status: e?.status || 500,
       phase, elapsedMs: Date.now() - startedAt, model: requestedModel,
+      ...(e?.upstreamStatus ? { upstreamStatus: e.upstreamStatus } : {}),
     }));
     if (e?.name === "TimeoutError")
       e = statusError("This free model took too long to respond. Try another free model or send a smaller request. Your draft is still here.", 504);
