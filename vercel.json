@@ -1,1 +1,6 @@
-{"functions":{"api/*.mjs":{"maxDuration":60}}}
+{
+  "functions": {
+    "api/butler.mjs": { "maxDuration": 150 },
+    "api/*.mjs": { "maxDuration": 60 }
+  }
+}
