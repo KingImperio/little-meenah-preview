@@ -65,6 +65,8 @@ const tools = [
   },
 ];
 export default async function handler(req, res) {
+  const startedAt = Date.now();
+  let phase = "authentication", requestedModel;
   res.setHeader("Cache-Control", "no-store");
   const streaming = req.headers.accept?.includes("text/event-stream");
   let opened = false;
@@ -118,11 +120,13 @@ export default async function handler(req, res) {
       )
     )
       throw statusError("Invalid conversation.");
+    phase = "catalogue";
     const available = await freeModels();
     const mode = ["fast", "balanced", "deep"].includes(body.mode)
       ? body.mode
       : "balanced";
     const model = body.model || presets(available)[mode];
+    requestedModel = model;
     const selected = available.find((m) => m.id === model && m.chat);
     if (!selected)
       throw statusError(
@@ -143,6 +147,7 @@ export default async function handler(req, res) {
       discovery = null;
     const deadline = Date.now() + 45000;
     for (let step = 0; step < 4; step++) {
+      phase = "model-" + step;
       disconnected.signal.throwIfAborted();
       emit("status", {
         label: step ? "Working through your request" : "Waiting for the model",
@@ -209,6 +214,7 @@ export default async function handler(req, res) {
         );
       messages.push(message);
       for (const call of message.tool_calls) {
+        phase = "tool-dispatch";
         let output;
         try {
           const args = JSON.parse(call.function.arguments);
@@ -313,6 +319,10 @@ export default async function handler(req, res) {
       model,
     });
   } catch (e) {
+    console.warn("BUTLER_REQUEST_FAILED", JSON.stringify({
+      type: e?.name || "Error", status: e?.status || 500,
+      phase, elapsedMs: Date.now() - startedAt, model: requestedModel,
+    }));
     if (opened) {
       if (!res.destroyed) {
         emit("error", {
