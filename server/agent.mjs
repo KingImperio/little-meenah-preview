@@ -14,13 +14,13 @@ export function connectedTask(messages) {
   const external =
     /\b(gmail|e-?mails?|mails?|inbox|composio|google\s?(?:drive|calendar)|slack|notion)\b/i;
   const followup =
-    /^(?:from\b|by\b|only\b|those\b|that\b|them\b|the (?:latest|newest|last)\b|yes\b|try again\b|continue\b|summari[sz]e\b|read (?:it|them)\b)/i;
+    /^(?:from\b|by\b|only\b|those\b|that\b|them\b|the (?:latest|newest|last|first|second)\b|(?:use|choose|pick)\s+(?:the\s+)?(?:first|second|personal|work|that|this|account)\b|(?:use|try) composio\b|yes\b|try again\b|continue\b|summari[sz]e\b|read (?:it|them)\b|(?:use\s+)?[^\s@]+@[^\s@]+\.[^\s@]+$)/i;
   if (!external.test(latest) && !followup.test(latest.trim())) return null;
-  const recent = users.slice(-5);
-  const start = recent.findLastIndex(
-    (x) => external.test(x) && !/^(?:use|try) composio\b/i.test(x.trim()),
-  );
-  if (start < 0 && !external.test(latest)) return null;
+  const recent = users.slice(-20);
+  let start = recent.length - 1;
+  // Follow clarifications backwards to their task, stopping at a topic change.
+  while (start >= 0 && followup.test(recent[start].trim())) start--;
+  if (start < 0 || !external.test(recent[start])) return null;
   const task = recent.slice(Math.max(start, 0)).join(" → ");
   const app = /\b(e-?mails?|mails?|inbox|gmail)\b/i.test(task) ? "Gmail: " : "";
   return (app + task).slice(-900);
@@ -117,6 +117,7 @@ export function validateArguments(
         typeof schema.additionalProperties === "object"
       )
         validateArguments(schema.additionalProperties, v, path + "." + k, root);
+      else if (schema.additionalProperties === true) continue;
       else throw Error("Unknown " + path + "." + k);
     }
   }
