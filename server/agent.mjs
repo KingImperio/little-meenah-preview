@@ -163,7 +163,31 @@ export function connectedAction(session, discovery, args) {
 export function readAction(session, discovery, args) {
   if (!READ_TOOLS.has(args.toolSlug))
     throw Error("This tool requires an approval proposal.");
-  const action = connectedAction(session, discovery, args);
+  let readArgs = args;
+  if (
+    args.toolSlug === "GMAIL_FETCH_EMAILS" ||
+    args.toolSlug === "GMAIL_LIST_THREADS"
+  ) {
+    if (
+      args.arguments?.verbose === true ||
+      args.arguments?.include_payload === true
+    )
+      throw Error(
+        "List metadata first with verbose=false and include_payload=false. Fetch individual message IDs for body content afterwards.",
+      );
+    const properties =
+      discovery?.tool_schemas?.[args.toolSlug]?.input_schema?.properties || {};
+    readArgs = {
+      ...args,
+      arguments: {
+        ...(properties.max_results ? { max_results: 10 } : {}),
+        ...(properties.verbose ? { verbose: false } : {}),
+        ...(properties.include_payload ? { include_payload: false } : {}),
+        ...args.arguments,
+      },
+    };
+  }
+  const action = connectedAction(session, discovery, readArgs);
   if (action.arguments.max_results > 25)
     throw Error(
       "Read at most 25 items per step; paginate with the returned token.",

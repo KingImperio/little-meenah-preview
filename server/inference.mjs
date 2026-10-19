@@ -4,7 +4,11 @@ import { statusError } from "./security.mjs";
 export async function readKiloCompletion(response, onText = () => {}) {
   if (!response.headers.get("content-type")?.includes("text/event-stream")) {
     const data = await response.json();
-    const message = data.choices?.[0]?.message;
+    const choice = data.choices?.[0];
+    const message = choice?.message && {
+      ...choice.message,
+      finish_reason: choice.finish_reason,
+    };
     if (message?.content) onText(message.content);
     return message;
   }
@@ -14,7 +18,8 @@ export async function readKiloCompletion(response, onText = () => {}) {
     calls = new Map();
   let buffer = "",
     content = "",
-    finished = false;
+    finished = false,
+    finishReason;
   function frame(text) {
     const data = text
       .split(/\r?\n/)
@@ -36,7 +41,10 @@ export async function readKiloCompletion(response, onText = () => {}) {
     if (!choice) return;
     if (choice.finish_reason === "error")
       throw statusError("The model could not finish this reply.", 502);
-    if (choice.finish_reason) finished = true;
+    if (choice.finish_reason) {
+      finished = true;
+      finishReason = choice.finish_reason;
+    }
     const delta = choice.delta || {};
     if (typeof delta.content === "string") {
       content += delta.content;
@@ -100,6 +108,7 @@ export async function readKiloCompletion(response, onText = () => {}) {
     return {
       role: "assistant",
       content,
+      finish_reason: finishReason,
       ...(tool_calls.length ? { tool_calls } : {}),
     };
   } finally {
