@@ -388,6 +388,10 @@ export default async function handler(req, res) {
                 "The connected read failed. Do not invent results or claim the app lacks this capability.",
               );
             output = boundedToolResult(result);
+            if (action.toolSlug === 'GMAIL_FETCH_EMAILS') output.coverage = {
+              query:action.arguments.query || '',
+              notice:'This is one bounded result page, not proof of complete mailbox coverage. A no-match result applies to this query only. Do not claim nothing newer exists unless a separate date-constrained search verifies that claim. Present returned matches and source links without overclaiming.',
+            };
           } else if (call.function.name === "propose_connected_action") {
             await inspectTool(user, session, discovery, args.toolSlug);
             const action = connectedAction(session, discovery, args);
