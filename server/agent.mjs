@@ -8,6 +8,93 @@ const READ_TOOLS = new Set([
   "GOOGLECALENDAR_GET_CURRENT_DATE_TIME",
 ]);
 
+export function nativeReadTools(discovery) {
+  const schemas = discovery?.tool_schemas || {};
+  const primary = new Set(discovery?.primary_tool_slugs || []);
+  return Object.entries(schemas)
+    .filter(
+      ([slug, t]) =>
+        READ_TOOLS.has(slug) &&
+        t.input_schema?.properties &&
+        t.hasFullSchema !== false,
+    )
+    .sort(
+      ([a], [b]) =>
+        (a === "GMAIL_FETCH_EMAILS" ? -2 : primary.has(a) ? -1 : 0) -
+        (b === "GMAIL_FETCH_EMAILS" ? -2 : primary.has(b) ? -1 : 0),
+    )
+    .slice(0, 4)
+    .flatMap(([slug, t]) => {
+      const toolkit = String(t.toolkit?.slug || t.toolkit).toLowerCase();
+      const accounts =
+        discovery.toolkit_connection_statuses
+          ?.find(
+            (c) =>
+              String(c.toolkit?.slug || c.toolkit).toLowerCase() === toolkit,
+          )
+          ?.accounts?.filter((a) => a.status === "ACTIVE") || [];
+      if (!accounts.length || t.input_schema.properties.connected_account)
+        return [];
+      const schema = structuredClone(t.input_schema);
+      function clean(x) {
+        if (!x || typeof x !== "object") return;
+        delete x.examples;
+        delete x.$schema;
+        if (typeof x.description === "string")
+          x.description = x.description.slice(0, 500);
+        for (const v of Object.values(x))
+          if (v && typeof v === "object")
+            Array.isArray(v) ? v.forEach(clean) : clean(v);
+      }
+      clean(schema);
+      schema.properties.connected_account = {
+        type: "string",
+        enum: accounts.map((a) => a.id),
+        description:
+          "Use the account ID matching the user’s mailbox choice: " +
+          accounts.map((a) => a.id + " = " + (a.alias || a.id)).join("; "),
+      };
+      schema.required = [
+        ...new Set([...(schema.required || []), "connected_account"]),
+      ];
+      schema.additionalProperties = false;
+      if (["GMAIL_FETCH_EMAILS", "GMAIL_LIST_THREADS"].includes(slug)) {
+        for (const key of ["verbose", "include_payload"])
+          if (schema.properties[key])
+            schema.properties[key] = {
+              type: "boolean",
+              enum: [false],
+              default: false,
+              description:
+                "List metadata first. Read a specific message by its returned ID for body content.",
+            };
+        if (schema.properties.max_results)
+          schema.properties.max_results = {
+            type: "integer",
+            minimum: 1,
+            maximum: 25,
+            default: 5,
+            description:
+              "Number of messages in this page. Use an integer, not quoted text.",
+          };
+      }
+      return [
+        {
+          type: "function",
+          function: {
+            name: "read_" + slug,
+            description: (
+              "Read-only: " +
+              (t.description || slug) +
+              ". Exact schema is already loaded. Call directly for the user’s requested task; no extra schema inspection needed."
+            ).slice(0, 800),
+            parameters: schema,
+          },
+        },
+      ];
+    });
+}
+
 export function connectedTask(messages) {
   const users = messages.filter((m) => m.role === "user").map((m) => m.content);
   const latest = users.at(-1) || "";
@@ -150,13 +237,18 @@ export function connectedAction(session, discovery, args) {
     throw Error("Choose an active account returned by discovery.");
   if (accounts.length > 1 && !args.account)
     throw Error("Ask the user which connected account to use.");
+  const chosen = args.account
+    ? accounts.filter((a) => a.id === args.account || a.alias === args.account)
+    : accounts;
+  if (args.account && chosen.length !== 1)
+    throw Error("Choose one unique connected account.");
   return {
     kind: "external",
     ...(session.transport ? { transport: session.transport } : {}),
     sessionId: session.session_id,
     toolSlug: args.toolSlug,
     arguments: args.arguments || {},
-    account: args.account || accounts[0].id,
+    account: chosen[0].id,
   };
 }
 
