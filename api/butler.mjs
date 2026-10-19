@@ -374,6 +374,7 @@ export default async function handler(req, res) {
         } catch (e) {
           output = { error: e.message };
         }
+        console.info('BUTLER_TOOL_STEP',JSON.stringify({step,tool:call.function.name,outcome:output?.error?'error':'ok',...(output?.error?{issue:/^(Invalid|Missing|Unknown|Discover|Inspect|Choose|Ask|This app|This tool|List metadata|Read at most|Composio|Full tool|The connected)/.test(output.error)?output.error.slice(0,160):'tool_call_failed'}:{})}));
         messages.push({
           role: "tool",
           tool_call_id: call.id,
