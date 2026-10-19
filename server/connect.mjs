@@ -1,15 +1,296 @@
-import {composio,newSession,statusError} from './security.mjs';
-export const consumerMode=()=>process.env.COMPOSIO_API_KEY?.startsWith('ck_');
-export function requireConsumerOwner(user){const owner=process.env.COMPOSIO_OWNER_EMAIL?.trim().toLowerCase();if(!owner)throw statusError('Your Composio account needs its Little Meenah sign-in email assigned on the server.',503);if(!user.email_confirmed_at||user.email?.toLowerCase()!==owner)throw statusError('These Composio connections belong to a different account. Connect your own apps under Account.',403);}
+import { composio, newSession, statusError } from "./security.mjs";
+export const consumerMode = () =>
+  process.env.COMPOSIO_API_KEY?.startsWith("ck_");
+export function requireConsumerOwner(user) {
+  const owner = process.env.COMPOSIO_OWNER_EMAIL?.trim().toLowerCase();
+  if (!owner)
+    throw statusError(
+      "Your Composio account needs its Little Meenah sign-in email assigned on the server.",
+      503,
+    );
+  if (!user.email_confirmed_at || user.email?.toLowerCase() !== owner)
+    throw statusError(
+      "These Composio connections belong to a different account. Connect your own apps under Account.",
+      403,
+    );
+}
 
 // A bounded Streamable HTTP client. The consumer secret never reaches the browser.
-export async function consumerClient(){let session,protocol='2025-06-18',nextId=0;
- async function rpc(method,params,notification=false){const id=++nextId;const r=await fetch('https://connect.composio.dev/mcp',{method:'POST',headers:{'x-consumer-api-key':process.env.COMPOSIO_API_KEY,Accept:'application/json, text/event-stream','Content-Type':'application/json',...(session?{'Mcp-Session-Id':session,'MCP-Protocol-Version':protocol}:{})},body:JSON.stringify({jsonrpc:'2.0',...(notification?{}:{id}),method,...(params?{params}:{})}),signal:AbortSignal.timeout(18000)});if(!r.ok)throw statusError(`Composio Connect could not authenticate or respond (${r.status}).`,502);session=r.headers.get('mcp-session-id')||session;if(notification)return;let response;if(r.headers.get('content-type')?.includes('text/event-stream')){const reader=r.body.getReader(),decoder=new TextDecoder();let buffer='';try{while(!response){const {done,value}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});if(buffer.length>2_000_000)throw statusError('Connected service response is too large.',502);let end;while((end=buffer.search(/\r?\n\r?\n/))>=0){const frame=buffer.slice(0,end);buffer=buffer.slice(end+(buffer.slice(end).startsWith('\r')?4:2));const data=frame.split(/\r?\n/).filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trimStart()).join('\n');if(data){const item=JSON.parse(data);if(item.id===id)response=item;}}}}finally{await reader.cancel();}}else response=await r.json();if(response?.error||!response?.result)throw statusError('Composio returned an unsuccessful response.',502);return response.result;}
- const init=await rpc('initialize',{protocolVersion:protocol,capabilities:{},clientInfo:{name:'little-meenah-butler',version:'0.2.0'}});protocol=init.protocolVersion;await rpc('notifications/initialized',undefined,true);
- return {list:()=>rpc('tools/list'),call:async(name,args)=>{const r=await rpc('tools/call',{name,arguments:args});if(r.isError)throw statusError('Composio could not complete this tool request.',502);if(r.structuredContent)return r.structuredContent;const blocks=(r.content||[]).filter(c=>c.type==='text');for(const block of blocks){try{const parsed=JSON.parse(block.text);if(parsed&&typeof parsed==='object')return parsed;}catch{}}const text=(r.content||[]).filter(c=>c.type==='text').map(c=>c.text).join('\n');try{return JSON.parse(text);}catch{const start=text.indexOf('{'),end=text.lastIndexOf('}');if(start>=0&&end>start){try{return JSON.parse(text.slice(start,end+1));}catch{}}return {text,diagnostic:blocks.map(b=>{try{JSON.parse(b.text);return {length:b.text.length,valid:true};}catch(e){return {length:b.text.length,error:e.message.replace(/.{0,40}at position /,'position ').slice(-100)};}})};}}};
+export async function consumerClient() {
+  let session,
+    protocol = "2025-06-18",
+    nextId = 0;
+  async function rpc(method, params, notification = false) {
+    const id = ++nextId;
+    const r = await fetch("https://connect.composio.dev/mcp", {
+      method: "POST",
+      headers: {
+        "x-consumer-api-key": process.env.COMPOSIO_API_KEY,
+        Accept: "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        ...(session
+          ? { "Mcp-Session-Id": session, "MCP-Protocol-Version": protocol }
+          : {}),
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        ...(notification ? {} : { id }),
+        method,
+        ...(params ? { params } : {}),
+      }),
+      signal: AbortSignal.timeout(18000),
+    });
+    if (!r.ok)
+      throw statusError(
+        `Composio Connect could not authenticate or respond (${r.status}).`,
+        502,
+      );
+    session = r.headers.get("mcp-session-id") || session;
+    if (notification) return;
+    let response;
+    if (r.headers.get("content-type")?.includes("text/event-stream")) {
+      const reader = r.body.getReader(),
+        decoder = new TextDecoder();
+      let buffer = "";
+      try {
+        while (!response) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          if (buffer.length > 2_000_000)
+            throw statusError("Connected service response is too large.", 502);
+          let end;
+          while ((end = buffer.search(/\r?\n\r?\n/)) >= 0) {
+            const frame = buffer.slice(0, end);
+            buffer = buffer.slice(
+              end + (buffer.slice(end).startsWith("\r") ? 4 : 2),
+            );
+            const data = frame
+              .split(/\r?\n/)
+              .filter((l) => l.startsWith("data:"))
+              .map((l) => l.slice(5).trimStart())
+              .join("\n");
+            if (data) {
+              const item = JSON.parse(data);
+              if (item.id === id) response = item;
+            }
+          }
+        }
+      } finally {
+        await reader.cancel();
+      }
+    } else response = await r.json();
+    if (response?.error || !response?.result)
+      throw statusError("Composio returned an unsuccessful response.", 502);
+    return response.result;
+  }
+  const init = await rpc("initialize", {
+    protocolVersion: protocol,
+    capabilities: {},
+    clientInfo: { name: "little-meenah-butler", version: "0.2.0" },
+  });
+  protocol = init.protocolVersion;
+  await rpc("notifications/initialized", undefined, true);
+  return {
+    list: () => rpc("tools/list"),
+    call: async (name, args) => {
+      const r = await rpc("tools/call", { name, arguments: args });
+      if (r.isError)
+        throw statusError(
+          "Composio could not complete this tool request.",
+          502,
+        );
+      if (r.structuredContent) return r.structuredContent;
+      const blocks = (r.content || []).filter((c) => c.type === "text");
+      for (const block of blocks) {
+        try {
+          const parsed = JSON.parse(block.text);
+          if (parsed && typeof parsed === "object") return parsed;
+        } catch {}
+      }
+      const text = (r.content || [])
+        .filter((c) => c.type === "text")
+        .map((c) => c.text)
+        .join("\n");
+      try {
+        return JSON.parse(text);
+      } catch {
+        const start = text.indexOf("{"),
+          end = text.lastIndexOf("}");
+        if (start >= 0 && end > start) {
+          try {
+            return JSON.parse(text.slice(start, end + 1));
+          } catch {}
+        }
+        return {
+          text,
+          diagnostic: blocks.map((b) => {
+            try {
+              JSON.parse(b.text);
+              return { length: b.text.length, valid: true };
+            } catch (e) {
+              return {
+                length: b.text.length,
+                error: e.message
+                  .replace(/.{0,40}at position /, "position ")
+                  .slice(-100),
+              };
+            }
+          }),
+        };
+      }
+    },
+  };
 }
-export function collectDiscovery(raw){const schemas={},connections=[];let workflow;function walk(x,depth=0){if(!x||typeof x!=='object'||depth>12)return;if(x.session_id)workflow=x.session_id;if(x.session?.id)workflow=x.session.id;if(x.tool_schemas&&typeof x.tool_schemas==='object')Object.assign(schemas,x.tool_schemas);if(x.tool_slug&&x.input_schema)schemas[x.tool_slug]={input_schema:x.input_schema,toolkit:x.toolkit,description:x.description,hasFullSchema:x.hasFullSchema};if(x.toolkit&&Array.isArray(x.accounts))connections.push({toolkit:x.toolkit,has_active_connection:x.has_active_connection,accounts:x.accounts.map(a=>({id:a.id,alias:a.alias,status:a.status}))});for(const v of Object.values(x))if(v&&typeof v==='object')Array.isArray(v)?v.forEach(i=>walk(i,depth+1)):walk(v,depth+1);}walk(raw);return {tool_schemas:schemas,toolkit_connection_statuses:connections,workflow};}
-export async function discover(user,query){if(consumerMode()){requireConsumerOwner(user);const client=await consumerClient();const tools=await client.list();if(!tools.tools?.some(t=>t.name==='COMPOSIO_SEARCH_TOOLS'))throw statusError('Composio search is not available for this account.',502);const raw=await client.call('COMPOSIO_SEARCH_TOOLS',{queries:[{use_case:query}],search_strategy:'tool_search',session:{generate_id:true}});const result=collectDiscovery(raw);return {session:{session_id:result.workflow,transport:'consumer'},discovery:result};}const session=await newSession(user);return {session,discovery:collectDiscovery(await composio(`tool_router/session/${session.session_id}/search`,{queries:[{use_case:query}],search_strategy:'tool_search'}))};}
-export async function executeConnected(user,action){if(action.transport==='consumer'){requireConsumerOwner(user);const client=await consumerClient();const raw=await client.call('COMPOSIO_MULTI_EXECUTE_TOOL',{session_id:action.sessionId,sync_response_to_workbench:false,tools:[{tool_slug:action.toolSlug,arguments:action.arguments,...(action.account?{account:action.account}:{})}]});return raw;}return composio(`tool_router/session/${encodeURIComponent(action.sessionId)}/execute`,{tool_slug:action.toolSlug,arguments:action.arguments,enable_auto_workbench_offload:false,...(action.account?{account:action.account}:{})});}
+export function collectDiscovery(raw) {
+  const schemas = {},
+    connections = [],
+    primary = new Set();
+  let workflow;
+  function walk(x, depth = 0) {
+    if (!x || typeof x !== "object" || depth > 12) return;
+    if (x.session_id) workflow = x.session_id;
+    if (x.session?.id) workflow = x.session.id;
+    for (const slug of x.primary_tool_slugs || []) primary.add(slug);
+    if (x.tool_schemas && typeof x.tool_schemas === "object")
+      Object.assign(schemas, x.tool_schemas);
+    if (x.tool_slug)
+      schemas[x.tool_slug] = {
+        ...schemas[x.tool_slug],
+        ...(x.input_schema ? { input_schema: x.input_schema } : {}),
+        ...(x.schemaRef ? { schemaRef: x.schemaRef } : {}),
+        toolkit: x.toolkit,
+        description: x.description,
+        hasFullSchema: x.hasFullSchema,
+      };
+    if (x.toolkit && Array.isArray(x.accounts))
+      connections.push({
+        toolkit: x.toolkit,
+        has_active_connection: x.has_active_connection,
+        accounts: x.accounts.map((a) => ({
+          id: a.id,
+          alias: a.alias || a.user_info?.email || a.user_info?.user?.emailAddress,
+          status: a.status,
+        })),
+      });
+    for (const v of Object.values(x))
+      if (v && typeof v === "object")
+        Array.isArray(v)
+          ? v.forEach((i) => walk(i, depth + 1))
+          : walk(v, depth + 1);
+  }
+  walk(raw);
+  return {
+    tool_schemas: schemas,
+    toolkit_connection_statuses: connections,
+    primary_tool_slugs: [...primary],
+    workflow,
+  };
+}
 
-export function executionFailed(result){if(!result||typeof result!=='object')return false;if(result.successful===false||result.success===false||result.isError===true||(result.result_type&&result.result_type!=='completed')||result.error)return true;return [result.data,result.response,...(Array.isArray(result.results)?result.results:[])].some(v=>v&&typeof v==='object'&&executionFailed(v));}
+export async function inspectTool(user, session, discovery, slug) {
+  const known = discovery?.tool_schemas?.[slug];
+  if (!known || slug.startsWith("COMPOSIO_"))
+    throw statusError("Discover this exact tool before loading its schema.");
+  if (known.input_schema && known.hasFullSchema !== false) return known;
+  if (session.transport !== "consumer")
+    throw statusError(
+      "This connector did not return a complete tool schema. Search for this exact operation again.",
+      502,
+    );
+  requireConsumerOwner(user);
+  const client = await consumerClient();
+  const raw = await client.call("COMPOSIO_GET_TOOL_SCHEMAS", {
+    tool_slugs: [slug],
+    session_id: session.session_id,
+  });
+  const full = collectDiscovery(raw).tool_schemas[slug];
+  if (!full?.input_schema)
+    throw statusError(
+      "Composio did not return the full schema for this tool.",
+      502,
+    );
+  discovery.tool_schemas[slug] = {
+    ...known,
+    ...full,
+    toolkit: full.toolkit || known.toolkit,
+    hasFullSchema: true,
+  };
+  return discovery.tool_schemas[slug];
+}
+export async function discover(user, query) {
+  if (consumerMode()) {
+    requireConsumerOwner(user);
+    const client = await consumerClient();
+    const tools = await client.list();
+    if (!tools.tools?.some((t) => t.name === "COMPOSIO_SEARCH_TOOLS"))
+      throw statusError(
+        "Composio search is not available for this account.",
+        502,
+      );
+    const raw = await client.call("COMPOSIO_SEARCH_TOOLS", {
+      queries: [{ use_case: query }],
+      search_strategy: "tool_search",
+      session: { generate_id: true },
+    });
+    const result = collectDiscovery(raw);
+    return {
+      session: { session_id: result.workflow, transport: "consumer" },
+      discovery: result,
+    };
+  }
+  const session = await newSession(user);
+  return {
+    session,
+    discovery: collectDiscovery(
+      await composio(`tool_router/session/${session.session_id}/search`, {
+        queries: [{ use_case: query }],
+        search_strategy: "tool_search",
+      }),
+    ),
+  };
+}
+export async function executeConnected(user, action) {
+  if (action.transport === "consumer") {
+    requireConsumerOwner(user);
+    const client = await consumerClient();
+    const raw = await client.call("COMPOSIO_MULTI_EXECUTE_TOOL", {
+      session_id: action.sessionId,
+      sync_response_to_workbench: false,
+      tools: [
+        {
+          tool_slug: action.toolSlug,
+          arguments: action.arguments,
+          ...(action.account ? { account: action.account } : {}),
+        },
+      ],
+    });
+    return raw;
+  }
+  return composio(
+    `tool_router/session/${encodeURIComponent(action.sessionId)}/execute`,
+    {
+      tool_slug: action.toolSlug,
+      arguments: action.arguments,
+      enable_auto_workbench_offload: false,
+      ...(action.account ? { account: action.account } : {}),
+    },
+  );
+}
+
+export function executionFailed(result) {
+  if (!result || typeof result !== "object") return false;
+  if (
+    result.successful === false ||
+    result.success === false ||
+    result.isError === true ||
+    (result.result_type && result.result_type !== "completed") ||
+    result.error
+  )
+    return true;
+  return [
+    result.data,
+    result.response,
+    ...(Array.isArray(result.results) ? result.results : []),
+  ].some((v) => v && typeof v === "object" && executionFailed(v));
+}
