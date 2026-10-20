@@ -1,4 +1,81 @@
-import {consumerMode,requireConsumerOwner,consumerClient,discover,executeConnected,executionFailed} from '../server/connect.mjs';
-import {userFor,requestBody,newSession,composio,signAction,verifyAction,claimAction,statusError,failure,rateLimit,connectedAccounts} from '../server/security.mjs';
-export default async function handler(req,res){res.setHeader('Cache-Control','no-store');try{if(req.method!=='POST')throw statusError('Use POST.',405);const user=await userFor(req);rateLimit(user.id);const body=requestBody(req);if(body.operation==='approve'){const signed=verifyAction(body.token,user.id);if(signed.action.kind!=='external')throw statusError('Invalid connected action.');await claimAction(req,user.id,signed.nonce);const result=await executeConnected(user,signed.action);if(executionFailed(result))throw statusError('The connected app did not complete the action. Check the app before retrying.',502);return res.status(200).json({result});}if(body.operation==='status'){if(consumerMode()){requireConsumerOwner(user);const client=await consumerClient();const listed=await client.list();return res.status(200).json({accounts:[],notice:'Your personal Composio connection is ready. Ask Butler for a specific app task to discover its tools.',toolCount:listed.tools?.length||0});}return res.status(200).json({accounts:await connectedAccounts(user)});}if(body.operation==='search'){if(typeof body.query!=='string'||!body.query.trim()||body.query.length>300)throw statusError('Add a short description of the tool you need.');return res.status(200).json({result:(await discover(user,body.query)).discovery});}if(consumerMode())throw statusError('Manage your existing personal connections in Composio For You.',400);const session=await newSession(user);if(body.operation==='connect'){if(!['gmail','googlecalendar','googledrive'].includes(body.toolkit))throw statusError('Unsupported connected app.');const link=await composio(`tool_router/session/${session.session_id}/link`,{toolkit:body.toolkit,callback_url:process.env.APP_URL||'https://little-meenah-preview.vercel.app/'});return res.status(200).json({url:link.redirect_url});}throw statusError('Unsupported operation.');}catch(e){failure(res,e);}}
-
+import { consumerInventory } from "../server/connected-inventory.mjs";
+import {
+  consumerMode,
+  discover,
+  executeConnected,
+  executionFailed,
+} from "../server/connect.mjs";
+import {
+  userFor,
+  requestBody,
+  newSession,
+  composio,
+  signAction,
+  verifyAction,
+  claimAction,
+  statusError,
+  failure,
+  rateLimit,
+  connectedAccounts,
+} from "../server/security.mjs";
+export default async function handler(req, res) {
+  res.setHeader("Cache-Control", "no-store");
+  try {
+    if (req.method !== "POST") throw statusError("Use POST.", 405);
+    const user = await userFor(req);
+    rateLimit(user.id);
+    const body = requestBody(req);
+    if (body.operation === "approve") {
+      const signed = verifyAction(body.token, user.id);
+      if (signed.action.kind !== "external")
+        throw statusError("Invalid connected action.");
+      await claimAction(req, user.id, signed.nonce);
+      const result = await executeConnected(user, signed.action);
+      if (executionFailed(result))
+        throw statusError(
+          "The connected app did not complete the action. Check the app before retrying.",
+          502,
+        );
+      return res.status(200).json({ result });
+    }
+    if (body.operation === "status") {
+      if (consumerMode()) {
+        return res.status(200).json(await consumerInventory(user));
+      }
+      return res.status(200).json({ accounts: await connectedAccounts(user) });
+    }
+    if (body.operation === "search") {
+      if (
+        typeof body.query !== "string" ||
+        !body.query.trim() ||
+        body.query.length > 300
+      )
+        throw statusError("Add a short description of the tool you need.");
+      return res
+        .status(200)
+        .json({ result: (await discover(user, body.query)).discovery });
+    }
+    if (consumerMode())
+      throw statusError(
+        "Manage your existing personal connections in Composio For You.",
+        400,
+      );
+    const session = await newSession(user);
+    if (body.operation === "connect") {
+      if (!["gmail", "googlecalendar", "googledrive"].includes(body.toolkit))
+        throw statusError("Unsupported connected app.");
+      const link = await composio(
+        `tool_router/session/${session.session_id}/link`,
+        {
+          toolkit: body.toolkit,
+          callback_url:
+            process.env.APP_URL || "https://little-meenah-preview.vercel.app/",
+        },
+      );
+      return res.status(200).json({ url: link.redirect_url });
+    }
+    throw statusError("Unsupported operation.");
+  } catch (e) {
+    failure(res, e);
+  }
+}
