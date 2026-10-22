@@ -1,6 +1,6 @@
 // The cache name carries a build id so every new build replaces the previous
 // cache instead of serving stale assets to returning visitors.
-const BUILD = "ad3469cb0a5b";
+const BUILD = "72c0a58d29bf";
 const CACHE = "little-meenah-shell-" + BUILD;
 const ROOT = new URL("./", self.location).href;
 
